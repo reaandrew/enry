@@ -190,50 +190,64 @@ func (e filelistError) Error() string {
 
 func printPercents(root string, fSummary map[string][]string, buff *bytes.Buffer, mode string, isJSON bool) {
 
-	// Select the way we quantify 'amount' of code.
-	reducer := fileCountValues
-	switch mode {
-	case "file":
-		reducer = fileCountValues
-	case "line":
-		reducer = lineCountValues
-	case "byte":
-		reducer = byteCountValues
-	}
-
-	// Reduce the list of files to a quantity of file type.
+	// Prepare to collect the number of files, lines, and bytes
 	var (
-		total           float64
+		totalFiles      float64
+		totalLines      float64
+		totalBytes      float64
 		keys            []string
 		unreadableFiles filelistError
 		fileValues      = make(map[string]float64)
+		lineValues      = make(map[string]float64)
+		byteValues      = make(map[string]float64)
 	)
+
+	// Reduce the list of files to quantities (file count, line count, byte size)
 	for fType, files := range fSummary {
-		val, err := reducer(root, files)
+		// Calculate file count
+		fileVal, err := fileCountValues(root, files)
 		if err != nil {
 			unreadableFiles = append(unreadableFiles, err...)
 		}
-		fileValues[fType] = val
+		fileValues[fType] = fileVal
+		totalFiles += fileVal
+
+		// Calculate line count
+		lineVal, err := lineCountValues(root, files)
+		if err != nil {
+			unreadableFiles = append(unreadableFiles, err...)
+		}
+		lineValues[fType] = lineVal
+		totalLines += lineVal
+
+		// Calculate byte size
+		byteVal, err := byteCountValues(root, files)
+		if err != nil {
+			unreadableFiles = append(unreadableFiles, err...)
+		}
+		byteValues[fType] = byteVal
+		totalBytes += byteVal
+
 		keys = append(keys, fType)
-		total += val
 	}
 
-	// Slice the keys by their quantity (file count, line count, byte size, etc.).
+	// Sort the keys by file count for example
 	sort.Slice(keys, func(i, j int) bool {
 		return fileValues[keys[i]] > fileValues[keys[j]]
 	})
 
 	if isJSON {
-		results := []map[string]interface{}{} // This will hold our language percentages
+		var results []map[string]interface{} // This will hold our language statistics
 
 		for _, fType := range keys {
-			val := fileValues[fType]
-			percent := val / total * 100.0
 			results = append(results, map[string]interface{}{
-				"percentage": fmt.Sprintf("%.2f%%", percent),
-				"language":   fType,
-				"color":      enry.GetColor(fType),
-				"type":       data.TypeForString(fType).String(),
+				"language":     fType,
+				"files":        int(fileValues[fType]),
+				"lines":        int(lineValues[fType]),
+				"bytes":        int(byteValues[fType]),
+				"file_percent": fmt.Sprintf("%.2f%%", fileValues[fType]/totalFiles*100.0),
+				"line_percent": fmt.Sprintf("%.2f%%", lineValues[fType]/totalLines*100.0),
+				"byte_percent": fmt.Sprintf("%.2f%%", byteValues[fType]/totalBytes*100.0),
 			})
 		}
 		if err := json.NewEncoder(buff).Encode(results); err != nil {
@@ -242,12 +256,16 @@ func printPercents(root string, fSummary map[string][]string, buff *bytes.Buffer
 	} else {
 		// The existing code for plain text format goes here
 		for _, fType := range keys {
-			val := fileValues[fType]
-			percent := val / total * 100.0
-			buff.WriteString(fmt.Sprintf("%.2f%%\t%s\n", percent, fType))
-			if unreadableFiles != nil {
-				buff.WriteString(fmt.Sprintf("\n%s", unreadableFiles.Error()))
-			}
+			buff.WriteString(fmt.Sprintf(
+				"Language: %s\nFiles: %d (%.2f%%)\nLines: %d (%.2f%%)\nBytes: %d (%.2f%%)\n\n",
+				fType,
+				int(fileValues[fType]), fileValues[fType]/totalFiles*100.0,
+				int(lineValues[fType]), lineValues[fType]/totalLines*100.0,
+				int(byteValues[fType]), byteValues[fType]/totalBytes*100.0,
+			))
+		}
+		if unreadableFiles != nil {
+			buff.WriteString(fmt.Sprintf("\n%s", unreadableFiles.Error()))
 		}
 	}
 }
